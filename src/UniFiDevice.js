@@ -1,11 +1,26 @@
 const { Service, Characteristic } = require('./types');
+const { debounce } = require('lodash');
+const convert = require('color-convert');
 
 module.exports = class UniFiDevice {
   constructor(plugin, homeKitAccessory) {
     this.plugin = plugin;
     this.homeKitAccessory = homeKitAccessory;
 
-    this.getOnCharacteristic().on('set', this.set.bind(this));
+    this.changePending = false;
+    this._debouncedSetAllProperties = debounce(this._setAllProperties, 1000);
+
+    this._hookCharacteristics();
+  }
+
+  _hookCharacteristics() {
+    this.getCharacteristic(Characteristic.On).on('set', this.set.bind(this));
+
+    if (this.supportsLedRing) {
+      this.getCharacteristic(Characteristic.Brightness).on('set', this.set.bind(this));
+      this.getCharacteristic(Characteristic.Hue).on('set', this.set.bind(this));
+      this.getCharacteristic(Characteristic.Saturation).on('set', this.set.bind(this));
+    }
   }
 
   get site() {
@@ -20,6 +35,14 @@ module.exports = class UniFiDevice {
     return this.homeKitAccessory.context.device_id;
   }
 
+  get hw_caps() {
+    return this.homeKitAccessory.context.hw_caps;
+  }
+
+  get supportsLedRing() {
+    return !!(this.hw_caps & (1 << 1));
+  }
+
   matches(device) {
     return this.mac === device.mac;
   }
@@ -29,6 +52,7 @@ module.exports = class UniFiDevice {
       site,
       mac: device.mac,
       device_id: device.device_id,
+      hw_caps: device.hw_caps,
     };
 
     this.homeKitAccessory.getService(Service.AccessoryInformation)
@@ -37,7 +61,17 @@ module.exports = class UniFiDevice {
       .setCharacteristic(Characteristic.Model, device.model)
       .setCharacteristic(Characteristic.SerialNumber, device.mac);
 
-    this.getOnCharacteristic().updateValue(device.led_override !== 'off');
+    if (!this.changePending) {
+      this.getCharacteristic(Characteristic.On).updateValue(device.led_override !== 'off');
+
+      if (this.supportsLedRing) {
+        this.getCharacteristic(Characteristic.Brightness).updateValue(device.led_override_color_brightness);
+
+        let hsv = convert.hex.hsv(device.led_override_color);
+        this.getCharacteristic(Characteristic.Hue).updateValue(hsv[0]);
+        this.getCharacteristic(Characteristic.Saturation).updateValue(hsv[1]);
+      }
+    }
   }
 
   getService() {
@@ -50,22 +84,45 @@ module.exports = class UniFiDevice {
     return service;
   }
 
-  getOnCharacteristic() {
-    return this.getService().getCharacteristic(Characteristic.On);
+  getCharacteristic(characteristic) {
+    return this.getService().getCharacteristic(characteristic);
   }
 
-  async set(value, callback) {
+  _setAllProperties() {
+    this.plugin.log.error('setting properties now');
+
+    let properties = {
+      led_override: this.getCharacteristic(Characteristic.On).value ? 'on' : 'off',
+    };
+
+    if (this.supportsLedRing) {
+      properties.led_override_color_brightness = this.getCharacteristic(Characteristic.Brightness).value;
+
+      let h = this.getCharacteristic(Characteristic.Hue).value;
+      let s = this.getCharacteristic(Characteristic.Saturation).value;
+      let hex = convert.hsv.hex([h, s, 100]);
+      properties.led_override_color = `#${hex}`;
+    }
+
+    this.changePending = false;
+
+    return this.setProperties(properties);
+  }
+
+  async setProperties(properties) {
+    this.plugin.log.info(`Device ${this.device_id}: Setting properties: ${JSON.stringify(properties)}`);
+
     try {
-      const led_override = value ? 'on' : 'off';
-
-      this.plugin.log.info(`Device ${this.device_id}: Setting led_override to ${led_override}`);
-      await this.plugin.client.setDevice('default', this.device_id, { led_override });
-
-      callback();
+      await this.plugin.client.setDevice(this.site.name, this.device_id, properties);
     } catch (e) {
       this.plugin.log.error(e);
       this.plugin.log.error(e.response.data);
-      callback(e);
     }
+  }
+
+  set(value, callback) {
+    this.changePending = true;
+    this._debouncedSetAllProperties();
+    callback();
   }
 };
