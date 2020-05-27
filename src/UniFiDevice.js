@@ -89,8 +89,6 @@ module.exports = class UniFiDevice {
   }
 
   _setAllProperties() {
-    this.plugin.log.error('setting properties now');
-
     let properties = {
       led_override: this.getCharacteristic(Characteristic.On).value ? 'on' : 'off',
     };
