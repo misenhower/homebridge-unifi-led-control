@@ -95,7 +95,7 @@ module.exports = class UniFiLedControl {
     let accessory = this.accessories.find(a => a.matches(device));
     if (!accessory) {
       this.log.info(`Setting up new device: ${device.model} (MAC: ${device.mac})`);
-      let homeKitAccessory = this.createHomeKitAccessory(device);
+      let homeKitAccessory = this.createHomeKitAccessory(site, device);
       accessory = new UniFiDevice(this, homeKitAccessory);
       this.accessories.push(accessory);
     }
@@ -105,9 +105,10 @@ module.exports = class UniFiLedControl {
     return accessory;
   }
 
-  createHomeKitAccessory(device) {
+  createHomeKitAccessory(site, device) {
     let uuid = UUIDGen.generate(device.mac);
     let homeKitAccessory = new Accessory(device.name || device.model || device.mac, uuid);
+    homeKitAccessory.context = UniFiDevice.getContextForDevice(site, device);
     this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [homeKitAccessory]);
     return homeKitAccessory;
   }

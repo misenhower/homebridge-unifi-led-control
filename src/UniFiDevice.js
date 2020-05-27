@@ -47,13 +47,17 @@ module.exports = class UniFiDevice {
     return this.mac === device.mac;
   }
 
-  async update(site, device) {
-    this.homeKitAccessory.context = {
+  static getContextForDevice(site, device) {
+    return {
       site,
       mac: device.mac,
       device_id: device.device_id,
       hw_caps: device.hw_caps,
     };
+  }
+
+  async update(site, device) {
+    this.homeKitAccessory.context = UniFiDevice.getContextForDevice(site, device);
 
     this.homeKitAccessory.getService(Service.AccessoryInformation)
       .setCharacteristic(Characteristic.Name, device.name || device.model)
